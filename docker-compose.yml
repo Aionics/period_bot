@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: period-bot
+    # Сам поднимется после отключения света / перезагрузки сервера и если вдруг упадёт
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/cycle.db
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
