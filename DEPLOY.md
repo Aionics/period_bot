@@ -2,41 +2,19 @@
 
 Инструкция для того, кто деплоит. Схема такая же, как у бота Тайного Санты (`~/zhabilizacia`): Docker, `restart: unless-stopped`, обновление через `bash install.sh`.
 
-Код уже закоммичен на компьютере Полины в `C:\Users\PolinaOwner\Documents\cycle_bot`, ветка `main`. Секретов в репозитории нет: `.env` и база в `.gitignore`.
+Код лежит в приватном репозитории `Aionics/period_bot`, ветка `main`. Секретов в репозитории нет: `.env` и база в `.gitignore`. Правки пушатся с компьютера Полины тем же ключом, что и у бота Санты.
 
-## 1. Создать приватный репозиторий на GitHub
+## 1. Склонировать код на сервер
 
-1. Создай **приватный** репозиторий `Aionics/period_bot`, **пустой** (без README, .gitignore и лицензии).
-2. **Settings → Deploy keys → Add deploy key**:
-   - Title: `Polina PC`
-   - Key:
-     ```
-     ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN+epEInMTb4OAzSolAEIcS3jR6rhomUJwcXlHrknj1r period-bot deploy key
-     ```
-   - **Allow write access** — включить (с компьютера Полины будут пушить правки).
-3. Скажи Полине, что готово, — код запушат с её компьютера.
-
-Если репозиторий будет называться иначе, тоже скажи: поменяем адрес remote.
-
-## 2. Доступ сервера к репозиторию
-
-Deploy key на GitHub привязывается только к одному репозиторию, поэтому ключ от бота Санты сюда не подойдёт. Нужен отдельный ключ только на чтение:
+Так же, как бот Санты:
 
 ```bash
-ssh-keygen -t ed25519 -N "" -C "server period-bot" -f ~/.ssh/id_ed25519_period_server
-cat ~/.ssh/id_ed25519_period_server.pub
+git clone git@github.com:Aionics/period_bot.git ~/period-bot
 ```
 
-Добавь его в тот же репозиторий: **Settings → Deploy keys → Add deploy key**, без write access.
+Если сервер ходит в GitHub через отдельный ключ, укажи его так же, как для `~/zhabilizacia` (например, через `GIT_SSH_COMMAND` при клонировании и `git config core.sshCommand` в папке).
 
-```bash
-GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_period_server -o IdentitiesOnly=yes" \
-  git clone git@github.com:Aionics/period_bot.git ~/period-bot
-cd ~/period-bot
-git config core.sshCommand "ssh -i ~/.ssh/id_ed25519_period_server -o IdentitiesOnly=yes"
-```
-
-## 3. Перенести настройки и базу с компьютера Полины
+## 2. Перенести настройки и базу с компьютера Полины
 
 Полина передаст два файла из `C:\Users\PolinaOwner\Documents\cycle_bot` (лично или в личном чате, **не в репозиторий**):
 
@@ -55,7 +33,7 @@ chmod 600 ~/period-bot/.env
 - Базу переносить необязательно: без неё бот начнёт с чистой базы, и Полина пройдёт анкету заново (1 минута).
 - `DB_PATH` из `.env` трогать не нужно: в контейнере его переопределяет `docker-compose.yml` (`/app/data/cycle.db`).
 
-## 4. Запуск
+## 3. Запуск
 
 > ⚠️ Перед запуском Полина должна **закрыть окно бота на компьютере** (`run.bat`). Две копии одного бота одновременно работать не могут — Telegram отдаёт обновления только одной.
 
@@ -67,7 +45,7 @@ cd ~/period-bot && bash install.sh
 
 Если Docker ещё не в автозагрузке (для бота Санты уже должен быть): `sudo systemctl enable docker`.
 
-## 5. Проверка
+## 4. Проверка
 
 ```bash
 docker compose logs --tail 20
