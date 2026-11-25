@@ -270,7 +270,7 @@ def today_kb(d: dict) -> InlineKeyboardMarkup:
     if cur:
         rows.append([btn("✅ Месячные закончились", f"pe:{iso(cur[0])}")])
     else:
-        rows.append([btn("🔴 Начались месячные", "st:today")])
+        rows.append([btn("🔴 Начались месячные", "sn:today")])
     rows.append([btn("📅 Календарь", f"cal:{today:%Y-%m}")])
     if d["mood"]:
         rows += mood_rows(today, moods_of(d, iso(today)))
@@ -922,6 +922,39 @@ async def send_pending_tip(cb: CallbackQuery, d: dict, today: date) -> None:
     await send_tip(cb.bot, cb.from_user.id, d, today)
 
 
+@router.callback_query(F.data.startswith("sn:"))
+async def cb_started_now(cb: CallbackQuery) -> None:
+    """Кнопка «Начались месячные» из подсказки дня или экрана «Сегодня».
+
+    Исходное сообщение не стираем (там подсказка и самочувствие) — отвечаем новым.
+    """
+    d = await user_or_alert(cb)
+    if not ready(d):
+        return
+    today = local_today(d)
+    if iso(today) in d["days"]:
+        await cb.answer("Уже отмечено")
+        return
+    add_day(d, today)
+    store.put(cb.from_user.id, d)
+    await cb.answer("🔴 Записано")
+
+    if cb.data == "sn:today":
+        await edit(cb, today_text(d), today_kb(d))
+    elif cb.message.reply_markup:
+        rows = [row for row in cb.message.reply_markup.inline_keyboard
+                if not any((b.callback_data or "").startswith("sn:") for b in row)]
+        try:
+            await cb.message.edit_reply_markup(reply_markup=kb(*rows) if rows else None)
+        except TelegramBadRequest:
+            pass
+
+    markup = flow_kb(today, None)
+    markup.inline_keyboard.append([btn("Начались не сегодня", "st:early")])
+    await cb.message.answer("🔴 Записано: месячные начались сегодня. Новый цикл пошёл.\n\nКакие сегодня?",
+                            reply_markup=markup)
+
+
 @router.callback_query(F.data.startswith("se:"))
 async def cb_started_early(cb: CallbackQuery) -> None:
     d = await user_or_alert(cb)
@@ -1116,9 +1149,15 @@ async def send_tip(bot: Bot, chat_id: int, d: dict, today: date, info_lines: lis
         parts.append(f"{header}\n\n💡 {T.tip_for(info.phase, today.toordinal())}")
     if d["mood"]:
         parts.append(T.MOOD_QUESTION)
-    if parts:
-        await bot.send_message(chat_id, "\n\n".join(parts),
-                               reply_markup=kb(*mood_rows(today)) if d["mood"] else None)
+    if not parts:
+        return
+    rows = []
+    # Месячные могут начаться не по календарю — кнопка есть в каждом дневном сообщении
+    if not C.current_period(profile(d), today):
+        rows.append([btn("🔴 Начались месячные", "sn:tip")])
+    if d["mood"]:
+        rows += mood_rows(today)
+    await bot.send_message(chat_id, "\n\n".join(parts), reply_markup=kb(*rows) if rows else None)
 
 
 async def tick(bot: Bot) -> None:

@@ -198,9 +198,11 @@ class DailyMessagesTest(unittest.TestCase):
     class FakeBot:
         def __init__(self):
             self.sent = []
+            self.buttons = []
 
         async def send_message(self, chat_id, text, reply_markup=None):
             self.sent.append(text)
+            self.buttons.append([b.text for r in reply_markup.inline_keyboard for b in r] if reply_markup else [])
 
     def test_tip_waits_for_start_answer(self):
         import asyncio
@@ -233,6 +235,26 @@ class DailyMessagesTest(unittest.TestCase):
         self.assertEqual(len(bot.sent), 1)
         self.assertIn("День 12 цикла", bot.sent[0])
         self.assertIsNone(d.get("tip_pending"))
+        self.assertIn("🔴 Начались месячные", bot.buttons[0])   # на случай, если начались не по календарю
+
+    def test_no_start_button_during_period(self):
+        import asyncio
+        os.environ.setdefault("BOT_TOKEN", "1:x")
+        import bot as B
+
+        d = B.new_user()
+        d.update(step="done", days=["2026-11-11", "2026-11-12"])
+        bot = self.FakeBot()
+        asyncio.run(B.send_tip(bot, 1, d, date(2026, 11, 12)))
+        self.assertNotIn("🔴 Начались месячные", bot.buttons[0])
+
+    def test_flow_markup_extendable(self):
+        os.environ.setdefault("BOT_TOKEN", "1:x")
+        import bot as B
+
+        m = B.flow_kb(date(2026, 11, 12), None)
+        m.inline_keyboard.append([B.btn("Начались не сегодня", "st:early")])
+        self.assertEqual(len(m.inline_keyboard), 2)
 
 
 if __name__ == "__main__":
