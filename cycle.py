@@ -286,8 +286,10 @@ def daily_events(p: Profile, today: date) -> list[tuple[str, int]]:
 
 # ───────────── Личные закономерности по самочувствию ─────────────
 
-def mood_pattern(p: Profile, moods: dict[date, str], today: date, skip=("good",)) -> tuple[str, int, int] | None:
-    """Что она чаще всего отмечает за 1–5 дней до месячных: (код, сколько раз, из скольких отметок).
+def mood_pattern(p: Profile, moods: dict[date, list[str]], today: date,
+                 skip=("good",)) -> tuple[str, int, int] | None:
+    """Что она чаще всего отмечает за 1–5 дней до месячных: (код, в скольких днях, из скольких
+    отмеченных дней). В один день можно отметить несколько вариантов.
 
     Показываем, только если набралось хотя бы 2 законченных цикла и признак встречался ≥3 раз
     в разных циклах.
@@ -300,10 +302,12 @@ def mood_pattern(p: Profile, moods: dict[date, str], today: date, skip=("good",)
     for s in starts[1:]:
         for k in range(1, 6):
             d = s - timedelta(days=k)
-            if d in moods:
+            codes = moods.get(d) or []
+            if isinstance(codes, str):  # старый формат: один вариант на день
+                codes = [codes]
+            if codes:
                 total += 1
-                if moods[d] not in skip:
-                    hits.append((moods[d], s))
+                hits += [(c, s) for c in codes if c not in skip]
     if not hits:
         return None
     code, n = Counter(c for c, _ in hits).most_common(1)[0]

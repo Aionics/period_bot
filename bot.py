@@ -248,10 +248,16 @@ def today_text(d: dict) -> str:
     return "\n".join(lines)
 
 
-def mood_rows(day: date, selected: str | None = None) -> list[list[InlineKeyboardButton]]:
-    """Кнопки самочувствия с подписями, по 3 в ряд. Выбранная — с галочкой."""
+def moods_of(d: dict, s: str) -> list[str]:
+    """Отметки самочувствия за день (раньше хранилась одна строка — поддерживаем и её)."""
+    v = d["moods"].get(s) or []
+    return [v] if isinstance(v, str) else list(v)
+
+
+def mood_rows(day: date, selected=()) -> list[list[InlineKeyboardButton]]:
+    """Кнопки самочувствия с подписями, по 3 в ряд. Выбранные — с галочкой."""
     buttons = [
-        btn(("✅ " if code == selected else e + " ") + T.MOOD_LABELS[code], f"md:{iso(day)}:{code}")
+        btn(("✅ " if code in selected else e + " ") + T.MOOD_LABELS[code], f"md:{iso(day)}:{code}")
         for code, e in T.MOODS.items()
     ]
     return [buttons[:3], buttons[3:]]
@@ -267,7 +273,7 @@ def today_kb(d: dict) -> InlineKeyboardMarkup:
         rows.append([btn("🔴 Начались месячные", "st:today")])
     rows.append([btn("📅 Календарь", f"cal:{today:%Y-%m}")])
     if d["mood"]:
-        rows += mood_rows(today, d["moods"].get(iso(today)))
+        rows += mood_rows(today, moods_of(d, iso(today)))
     return kb(*rows)
 
 
@@ -325,8 +331,8 @@ def day_text(d: dict, day: date) -> str:
             lines.append("🟡 Можно забеременеть (прогноз)")
         if day > today and c.start <= day <= c.period_end and s not in d["days"]:
             lines.append("⭕ Прогноз месячных")
-    if s in d["moods"]:
-        lines.append(f"Самочувствие: {T.MOODS[d['moods'][s]]} {T.MOOD_NAMES[d['moods'][s]]}")
+    if moods_of(d, s):
+        lines.append("Самочувствие: " + ", ".join(f"{T.MOODS[c]} {T.MOOD_NAMES[c]}" for c in moods_of(d, s)))
     if day > today + timedelta(days=1):
         lines.append("\nЭто будущий день — тут только прогноз.")
     return "\n".join(lines)
@@ -389,12 +395,12 @@ def stats_text(d: dict) -> str:
     for w in warn:
         lines += ["", "⚠️ " + w]
 
-    moods = {from_iso(k): v for k, v in d["moods"].items()}
+    moods = {from_iso(k): moods_of(d, k) for k in d["moods"]}
     pat = C.mood_pattern(p, moods, today)
     if pat:
         code, n, total = pat
         lines += ["", f"📈 За 1–5 дней до месячных ты чаще всего отмечаешь {T.MOODS[code]} "
-                      f"{T.MOOD_NAMES[code]} ({n} из {total} отметок)."]
+                      f"{T.MOOD_NAMES[code]} ({n} из {total} отмеченных дней)."]
     elif d["mood"]:
         lines += ["", "📈 Отмечай самочувствие — через 2–3 цикла здесь появятся твои закономерности."]
     return "\n".join(lines)
@@ -896,6 +902,7 @@ async def cb_started(cb: CallbackQuery) -> None:
         store.put(cb.from_user.id, d)
         await edit(cb, "🔴 Записано: месячные начались сегодня. Новый цикл пошёл.\n\nКакие сегодня?",
                    flow_kb(today, None))
+        await send_pending_tip(cb, d, today)
     elif what == "early":
         days = [today - timedelta(days=k) for k in range(10, 0, -1)]
         await edit(cb, "📅 В какой день начались?",
@@ -903,6 +910,16 @@ async def cb_started(cb: CallbackQuery) -> None:
                       [btn(f"{x.day:02d}.{x.month:02d}", f"se:{iso(x)}") for x in days[5:]]))
     else:
         await edit(cb, "Хорошо, спрошу завтра.")
+        await send_pending_tip(cb, d, today)
+
+
+async def send_pending_tip(cb: CallbackQuery, d: dict, today: date) -> None:
+    """Подсказка дня, отложенная до ответа на «Начались?», — уже с правильной фазой."""
+    if d.get("tip_pending") != iso(today):
+        return
+    d["tip_pending"] = None
+    store.put(cb.from_user.id, d)
+    await send_tip(cb.bot, cb.from_user.id, d, today)
 
 
 @router.callback_query(F.data.startswith("se:"))
@@ -928,6 +945,7 @@ async def cb_started_early(cb: CallbackQuery) -> None:
         d["ended"].append(iso(start))
         store.put(cb.from_user.id, d)
         await edit(cb, text)
+    await send_pending_tip(cb, d, today)
 
 
 @router.callback_query(F.data.startswith("fl:"))
@@ -968,12 +986,21 @@ async def cb_mood(cb: CallbackQuery) -> None:
     if code not in T.MOODS:
         await cb.answer()
         return
-    d["moods"][s] = code
+    selected = moods_of(d, s)
+    if code in selected:
+        selected.remove(code)
+        await cb.answer(f"Убрано: {T.MOOD_LABELS[code].lower()}")
+    else:
+        selected.append(code)
+        await cb.answer(f"Записано: {T.MOOD_LABELS[code].lower()}. Можно выбрать ещё.")
+    if selected:
+        d["moods"][s] = selected
+    else:
+        d["moods"].pop(s, None)
     store.put(cb.from_user.id, d)
-    await cb.answer(f"Записано: {T.MOOD_LABELS[code].lower()}. Можно передумать и нажать другое.")
-    # Ставим галочку на выбранной кнопке, остальные кнопки сообщения не трогаем
+    # Ставим галочки на выбранных кнопках, остальные кнопки сообщения не трогаем
     day = from_iso(s)
-    new_mood = iter([b for row in mood_rows(day, code) for b in row])
+    new_mood = iter([b for row in mood_rows(day, selected) for b in row])
     rows = [[next(new_mood) if (b.callback_data or "").startswith("md:") else b for b in row]
             for row in cb.message.reply_markup.inline_keyboard] if cb.message.reply_markup else []
     try:
@@ -1069,7 +1096,17 @@ async def send_daily(bot: Bot, chat_id: int, d: dict, today: date) -> None:
                 line += "\nКалендарь не гарантия — нужна контрацепция."
             info_lines.append(line)
 
-    info = C.day_info(p, today, today)
+    if any(ev == C.EV_START_ASK for ev, _ in events):
+        # Сначала ждём ответа «Начались?»: иначе подсказка уйдёт с фазой «перед месячными»,
+        # а через минуту девушка отметит месячные. Подсказку пришлём после ответа.
+        d["tip_pending"] = iso(today)
+        return
+    await send_tip(bot, chat_id, d, today, info_lines)
+
+
+async def send_tip(bot: Bot, chat_id: int, d: dict, today: date, info_lines: list[str] | None = None) -> None:
+    """Подсказка дня и вопрос о самочувствии — по актуальным отметкам."""
+    info = C.day_info(profile(d), today, today)
     parts = []
     if info_lines:
         parts.append("\n\n".join(info_lines))
@@ -1098,6 +1135,7 @@ async def tick(bot: Bot) -> None:
             d["sent_day"] = iso(today)
             store.put(chat_id, d)
             await send_daily(bot, chat_id, d, today)
+            store.put(chat_id, d)  # send_daily мог отметить, что подсказка ждёт ответа
         except TelegramForbiddenError:
             pass  # девушка заблокировала бота — данные остаются, пока она не удалит их сама
         except Exception as e:  # noqa: BLE001

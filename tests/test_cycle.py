@@ -132,6 +132,13 @@ class MoodPatternTest(unittest.TestCase):
                  date(2026, 9, 25): "pain", date(2026, 9, 24): "good"}
         self.assertEqual(C.mood_pattern(p, moods, date(2026, 10, 1)), ("pain", 3, 4))
 
+    def test_several_moods_per_day(self):
+        starts = [date(2026, 8, 1), date(2026, 8, 29), date(2026, 9, 26)]
+        p = C.Profile(set().union(*(days(s, 4) for s in starts)))
+        moods = {date(2026, 8, 27): ["tired", "pain"], date(2026, 8, 28): ["pain"],
+                 date(2026, 9, 25): ["pain", "low"]}
+        self.assertEqual(C.mood_pattern(p, moods, date(2026, 10, 1)), ("pain", 3, 3))
+
 
 class StorageTest(unittest.TestCase):
     def test_encrypted_and_deleted(self):
@@ -173,6 +180,59 @@ class BotTextsSmokeTest(unittest.TestCase):
             B.day_kb(d, day)
         for tz in B.TIMEZONES:
             self.assertLessEqual(len(f"ob:tz:{tz}".encode()), 64)
+
+    def test_mood_multiselect_and_old_format(self):
+        os.environ.setdefault("BOT_TOKEN", "1:x")
+        import bot as B
+
+        d = B.new_user()
+        d["moods"] = {"2026-11-20": "pain", "2026-11-21": ["pain", "tired"]}
+        self.assertEqual(B.moods_of(d, "2026-11-20"), ["pain"])
+        labels = [b.text for r in B.mood_rows(date(2026, 11, 21), B.moods_of(d, "2026-11-21")) for b in r]
+        self.assertEqual(sum(t.startswith("✅") for t in labels), 2)
+
+
+class DailyMessagesTest(unittest.TestCase):
+    """Утренние сообщения на поддельном боте."""
+
+    class FakeBot:
+        def __init__(self):
+            self.sent = []
+
+        async def send_message(self, chat_id, text, reply_markup=None):
+            self.sent.append(text)
+
+    def test_tip_waits_for_start_answer(self):
+        import asyncio
+        os.environ.setdefault("BOT_TOKEN", "1:x")
+        import bot as B
+
+        d = B.new_user()
+        d.update(step="done", days=[x.isoformat() for x in days(date(2026, 10, 27), 4)])  # ждём 24.11
+        bot = self.FakeBot()
+        asyncio.run(B.send_daily(bot, 1, d, date(2026, 11, 24)))
+        self.assertEqual(len(bot.sent), 1)                 # только «Начались?»
+        self.assertIn("начались", bot.sent[0])
+        self.assertEqual(d["tip_pending"], "2026-11-24")
+
+        # Ответила «Да, сегодня» — подсказка уже про месячные, а не «перед месячными»
+        B.add_day(d, date(2026, 11, 24))
+        asyncio.run(B.send_tip(bot, 1, d, date(2026, 11, 24)))
+        self.assertIn("День 1 цикла", bot.sent[1])
+        self.assertIn("месячные", bot.sent[1].split("\n")[0])
+
+    def test_tip_sent_right_away_on_normal_day(self):
+        import asyncio
+        os.environ.setdefault("BOT_TOKEN", "1:x")
+        import bot as B
+
+        d = B.new_user()
+        d.update(step="done", days=[x.isoformat() for x in days(date(2026, 11, 1), 4)])
+        bot = self.FakeBot()
+        asyncio.run(B.send_daily(bot, 1, d, date(2026, 11, 12)))
+        self.assertEqual(len(bot.sent), 1)
+        self.assertIn("День 12 цикла", bot.sent[0])
+        self.assertIsNone(d.get("tip_pending"))
 
 
 if __name__ == "__main__":
